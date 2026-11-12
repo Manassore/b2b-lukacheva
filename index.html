@@ -34,9 +34,8 @@
     </nav>
     <section id="office" class="panel view" hidden>
       <h1>Приёмка в офисе</h1>
-      <p id="apiCompatibility" class="notice warn" hidden>Нужна серверная версия Apps Script 1.1. Подключитесь к интернету и обновите приложение.</p>
+      <div id="apiCompatibility" class="notice warn" hidden><span id="apiCompatibilityText">Сервер не подтвердил совместимость с приложением 1.1.</span><button id="apiRetry" class="outline small" type="button" style="display:block;margin-top:10px">Проверить сервер</button></div>
       <form id="officeForm">
-        <label for="officeSearch">Найти клиента</label><input id="officeSearch" type="search" placeholder="Начните вводить название" autocomplete="off">
         <label for="officeClient">Клиент</label><select id="officeClient" required><option value="">Выберите клиента</option></select>
         <div id="officeWeightFields">
           <label for="officeBags">Количество мешков</label><input id="officeBags" type="number" min="1" max="200" step="1" value="1" required>
