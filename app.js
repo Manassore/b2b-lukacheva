@@ -95,6 +95,7 @@ function setAvailability(){const setup=!validSetup()||!remote.user;
  document.querySelectorAll('.view').forEach(el=>el.hidden=setup||el.id!==activeTab);
  document.querySelectorAll('.tabs button').forEach(btn=>btn.classList.toggle('active',btn.dataset.tab===activeTab));
  $('settingsUser').textContent=remote.user?`${remote.user.name} (${remote.user.role})`:'';
+ const compatible=Number(remote.apiVersion||0)>=2; $('officeSubmit').disabled=!compatible; $('apiCompatibility').hidden=setup||compatible;
  const cBtn=document.querySelector('[data-tab="courier"]'),oBtn=document.querySelector('[data-tab="office"]');
  cBtn.disabled=!hasRole('COURIER');oBtn.disabled=!hasRole('OFFICE');
  if(!setup&&((activeTab==='office'&&!hasRole('OFFICE'))||(activeTab==='courier'&&!hasRole('COURIER'))))switchTab(hasRole('OFFICE')?'office':'courier');
