@@ -12,10 +12,10 @@
   <title>B2B · Лукачёва</title>
 </head>
 <body>
-  <header class="top"><div class="brand"><strong>B2B · Лукачёва</strong><small>Поступления и курьер</small></div><div class="connect"><span id="network">Проверка…</span><small id="identity">Не настроено</small></div></header>
+  <header class="top"><div class="brand"><strong>B2B · Лукачёва</strong><small>Приёмка B2B · Лукачёва, 6</small></div><div class="connect"><span id="network">Проверка…</span><small id="identity">Не настроено</small></div></header>
   <div class="syncbar"><span id="queueCount">Очередь: 0</span><button type="button" id="syncBtn" class="outline">Отправить</button></div>
   <main>
-    <div id="message" class="notice" hidden></div>
+    <div id="message" class="notice" role="status" aria-live="polite" aria-atomic="true" hidden></div>
     <section id="setup" class="panel" hidden>
       <h1>Настройка телефона</h1>
       <p>Один раз подключитесь к Wi-Fi, введите адрес Google Apps Script и персональный токен сотрудника.</p>
@@ -35,13 +35,22 @@
     <section id="office" class="panel view" hidden>
       <h1>Приёмка в офисе</h1>
       <form id="officeForm">
-        <label for="officeClient">Клиент</label><select id="officeClient" required></select>
-        <label for="officeBags">Мешков</label><input id="officeBags" type="number" min="1" max="200" step="1" value="1" required>
-        <label for="officeMode">Когда взвешиваем</label><select id="officeMode"><option value="BEFORE">При приёмке</option><option value="AFTER">После стирки и сушки</option></select>
-        <div id="officeWeightWrap"><label for="officeWeight">Общий вес, кг</label><input id="officeWeight" type="text" inputmode="decimal" placeholder="Например, 18,6"></div>
-        <label for="officeNote">Комментарий (необязательно)</label><textarea id="officeNote" rows="2" maxlength="300"></textarea>
-        <button class="primary" type="submit">Сохранить поступление</button>
+        <label for="officeSearch">Найти клиента</label><input id="officeSearch" type="search" placeholder="Начните вводить название" autocomplete="off">
+        <label for="officeClient">Клиент</label><select id="officeClient" required><option value="">Выберите клиента</option></select>
+        <div id="officeWeightFields">
+          <label for="officeBags">Количество мешков</label><input id="officeBags" type="number" min="1" max="200" step="1" value="1" required>
+          <label for="officeWeight">Общий вес, кг</label><input id="officeWeight" type="text" inputmode="decimal" placeholder="Например, 18,6" required>
+        </div>
+        <div id="officePieceFields" hidden>
+          <p class="muted">Укажите количество каждого изделия. Мешки и вес не требуются.</p>
+          <div id="officeItems" class="items"></div>
+          <p id="officeItemCount" class="muted"></p>
+        </div>
+        <label for="officeNote">Комментарий (необязательно)</label><textarea id="officeNote" rows="2" maxlength="300" placeholder="Особенности приёмки"></textarea>
+        <button id="officeSubmit" class="primary" type="submit">Сохранить поступление</button>
       </form>
+      <div id="lastOfficeStatus" class="last-status" role="status" aria-live="polite" hidden></div>
+      <h2>Последние поступления</h2><div id="officeHistory" class="records"></div>
     </section>
     <section id="courier" class="panel view" hidden>
       <h1>Забор у клиента</h1><p class="muted">Здесь указываются только клиент и количество мешков. Вес внесёт офис.</p>
