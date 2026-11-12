@@ -6,9 +6,15 @@ const CACHE='lukacheva-b2b-remote-v1';
 const DB_NAME='lukacheva-b2b-offline-v1';
 let config=JSON.parse(localStorage.getItem(STORE)||'{}');
 let remote=JSON.parse(localStorage.getItem(CACHE)||'{}');
-let activeTab='office',syncing=false,jsonpSeq=0;
+let activeTab='office',syncing=false,jsonpSeq=0;let lastOfficeOpId='';
 
-function message(s,warning=false){const el=$('message');el.textContent=s;el.className='notice'+(warning?' warn':'');el.hidden=false;}
+let messageTimer;
+function message(s,warning=false){
+  const el=$('message');clearTimeout(messageTimer);el.textContent=s;el.className='notice'+(warning?' warn':'');el.hidden=false;
+  messageTimer=setTimeout(()=>{el.hidden=true;},9000);
+}
+function officeStatus(s,warning=false){const el=$('lastOfficeStatus');el.textContent=s;el.className='last-status'+(warning?' warn':'');el.hidden=false;}
+
 function errorText(e){return (e&&e.message)||String(e||'Неизвестная ошибка');}
 function role(){return String(remote.user?.role||'');}
 function hasRole(r){return role()==='OWNER'||role()===r;}
@@ -52,52 +58,109 @@ async function ack(id){for(let i=0;i<3;i++){
   if(item&&['APPLIED','REJECTED','ERROR'].includes(item.status))return item;
   await delay(1200);
  }return {id,status:'NOT_FOUND'};}
-async function syncQueue(){if(syncing||!validSetup())return;
- syncing=true;$('syncBtn').disabled=true;$('syncBtn').textContent='Отправка…';let sent=0;
+async function syncQueue(manual=false){if(syncing||!validSetup())return;
+ syncing=true;$('syncBtn').disabled=true;$('syncBtn').textContent='Отправка…';let sent=0;let rejected=0;
  try{
   const all=await queueAll();
+  if(!all.length){if(manual)message('Очередь пуста — отправлять нечего.');return;}
   for(const op of all){
    if(op.localStatus==='REJECTED')continue;
    try{
     // Даже если POST ответил opaque, операция НЕ считается отправленной без status=APPLIED.
     await postOpaque(op);const r=await ack(op.opId);
-    if(r.status==='APPLIED'){await queueDelete(op.opId);sent++;}
-    else if(r.status==='REJECTED'||r.status==='ERROR'){await queueMark(op,'REJECTED',r.error||'Ошибка обработки на сервере');}
+    if(r.status==='APPLIED'){
+      await queueDelete(op.opId);sent++;
+      if(op.opId===lastOfficeOpId)officeStatus('Отправлено в Google Таблицу. Операция подтверждена сервером.');
+    }
+    else if(r.status==='REJECTED'||r.status==='ERROR'){
+      rejected++;await queueMark(op,'REJECTED',r.error||'Ошибка обработки на сервере');
+      if(op.opId===lastOfficeOpId)officeStatus('Ошибка отправки: '+(r.error||'Сервер отклонил запись'),true);
+    }
     else{await queueMark(op,'WAITING','Сервер пока не подтвердил операцию');break;}
    }catch(e){await queueMark(op,'WAITING',errorText(e));break;}
   }
-  if(sent){try{await refreshRemote();}catch(e){message('Передано '+sent+' записей; обновление списка пока недоступно.',true);}}
-  else if((await queueAll()).length)message('Есть неподтверждённые записи. Они остаются на телефоне до успешной синхронизации.',true);
+  const rest=(await queueAll()).length;
+  if(sent){
+    try{await refreshRemote();}catch(e){/* Отправка подтверждена сервером; список можно обновить позднее. */}
+    message('Успешно отправлено в Google Таблицу: '+sent+'. В очереди осталось: '+rest+(rejected?'. Ошибок: '+rejected:'')+'.',!!rest);
+  }else if(rest && (manual||rejected))message('Не отправлено. На телефоне сохранено: '+rest+'; серверных ошибок: '+rejected+'.',true);
  }catch(e){message('Синхронизация: '+errorText(e),true);}
  finally{syncing=false;$('syncBtn').disabled=false;$('syncBtn').textContent='Отправить';await renderQueue();await renderRecords();}
 }
 async function refreshRemote(){const r=await jsonp('bootstrap');if(!r.ok)throw Error(r.error||'Ошибка доступа');
- remote=r;localStorage.setItem(CACHE,JSON.stringify(r));renderIdentity();renderClientOptions();renderRecords();setAvailability();
+ remote=r;localStorage.setItem(CACHE,JSON.stringify(r));renderIdentity();renderClientOptions();renderRecords();renderOfficeHistory();setAvailability();
 }
 function setAvailability(){const setup=!validSetup()||!remote.user;
  $('setup').hidden=!setup;$('nav').hidden=setup;
  document.querySelectorAll('.view').forEach(el=>el.hidden=setup||el.id!==activeTab);
  document.querySelectorAll('.tabs button').forEach(btn=>btn.classList.toggle('active',btn.dataset.tab===activeTab));
  $('settingsUser').textContent=remote.user?`${remote.user.name} (${remote.user.role})`:'';
+ const compatible=Number(remote.apiVersion||0)>=2; $('officeSubmit').disabled=!compatible; $('apiCompatibility').hidden=setup||compatible;
  const cBtn=document.querySelector('[data-tab="courier"]'),oBtn=document.querySelector('[data-tab="office"]');
  cBtn.disabled=!hasRole('COURIER');oBtn.disabled=!hasRole('OFFICE');
  if(!setup&&((activeTab==='office'&&!hasRole('OFFICE'))||(activeTab==='courier'&&!hasRole('COURIER'))))switchTab(hasRole('OFFICE')?'office':'courier');
 }
 function renderIdentity(){const u=remote.user;$('identity').textContent=u?u.name+' · '+u.role:'Не настроено';}
 function renderNetwork(){$('network').textContent=navigator.onLine?'Связь может быть доступна':'Офлайн';}
-function renderClientOptions(){for(const name of ['officeClient','courierClient']){
- const el=$(name),prior=el.value;el.replaceChildren();
- for(const c of (remote.clients||[])){const opt=document.createElement('option');opt.value=c.id;opt.textContent=c.name;el.append(opt);}
- if((remote.clients||[]).some(x=>x.id===prior))el.value=prior;
- }adaptOfficeMode();}
+function renderClientOptions(){
+  populateClientSelect('officeClient',(remote.clients||[]),$('officeSearch').value);
+  populateClientSelect('courierClient',(remote.clients||[]).filter(c=>c.accountType!=='PIECE'));
+  renderOfficeFields();
+}
+function populateClientSelect(id,clients,filter=''){
+  const el=$(id),prior=el.value,query=filter.trim().toLocaleLowerCase('ru');
+  el.replaceChildren();const empty=document.createElement('option');empty.value='';empty.textContent='Выберите клиента';el.append(empty);
+  for(const c of clients.filter(x=>x.name.toLocaleLowerCase('ru').includes(query))){
+    const opt=document.createElement('option');opt.value=c.id;opt.textContent=c.name;el.append(opt);
+  }
+  el.value=clients.some(x=>x.id===prior && x.name.toLocaleLowerCase('ru').includes(query))?prior:'';
+}
 function clientById(id){return(remote.clients||[]).find(c=>c.id===id);}
-function adaptOfficeMode(){const c=clientById($('officeClient').value);$('officeMode').value=c?.mode||'BEFORE';weightVisibility();}
-function weightVisibility(){$('officeWeightWrap').hidden=$('officeMode').value==='AFTER';}
+function accountType(c){return c?.accountType==='PIECE'?'PIECE':'WEIGHT';}
+function renderOfficeFields(){
+  const c=clientById($('officeClient').value),piece=accountType(c)==='PIECE';
+  $('officeWeightFields').hidden=piece;$('officePieceFields').hidden=!piece;
+  $('officeBags').required=!piece;$('officeWeight').required=!piece;
+  const list=$('officeItems');list.replaceChildren();
+  if(!piece)return;
+  const services=(remote.services||[]).filter(s=>s.clientId===c.id);
+  if(!services.length){list.append(selectText('p','Для клиента не настроена номенклатура. Обратитесь к руководителю.'));return;}
+  for(const svc of services){
+    const row=document.createElement('div');row.className='itemrow';
+    const name=document.createElement('div');name.className='itemname';name.textContent=svc.name+' ('+(svc.unit||'шт')+')';row.append(name);
+    const controls=document.createElement('div');controls.className='itemcontrols';
+    const input=document.createElement('input');input.type='number';input.min='0';input.max='1000';input.step='1';input.value='0';input.inputMode='numeric';input.dataset.service=svc.code;input.setAttribute('aria-label','Количество: '+svc.name);
+    const minus=button('−',()=>{input.value=String(Math.max(0,Number(input.value||0)-1));updateItemCount();});
+    const plus=button('+',()=>{input.value=String(Math.min(1000,Number(input.value||0)+1));updateItemCount();});
+    minus.className='itembutton';plus.className='itembutton';input.addEventListener('input',updateItemCount);
+    controls.append(minus,input,plus);row.append(controls);list.append(row);
+  }
+  updateItemCount();
+}
+function updateItemCount(){
+  const inputs=[...document.querySelectorAll('#officeItems input[data-service]')];
+  const n=inputs.reduce((total,x)=>total+(Number.isInteger(Number(x.value))&&Number(x.value)>0?Number(x.value):0),0);
+  $('officeItemCount').textContent='Всего изделий: '+n;
+}
+function collectItems(){
+  const items=[];
+  for(const input of document.querySelectorAll('#officeItems input[data-service]')){
+    const qty=Number(input.value);
+    if(!Number.isInteger(qty)||qty<0||qty>1000)throw Error('Количество изделий должно быть целым числом от 0 до 1000');
+    if(qty>0)items.push({code:input.dataset.service,qty});
+  }
+  if(!items.length)throw Error('Укажите количество хотя бы одного изделия');
+  return items;
+}
+function resetOfficeForm(){
+  $('officeForm').reset();$('officeSearch').value='';populateClientSelect('officeClient',remote.clients||[]);$('officeClient').value='';
+  $('officeBags').value='1';$('officeWeight').value='';$('officeNote').value='';renderOfficeFields();
+}
 function switchTab(tab){activeTab=tab;setAvailability();if(tab==='pending'){renderRecords();renderQueue();}}
 function selectText(p,s){const el=document.createElement(p);el.textContent=s;return el;}
 function button(text,fun){const b=document.createElement('button');b.className='outline small';b.textContent=text;b.type='button';b.addEventListener('click',fun);return b;}
-const statusNames={IN_TRANSIT:'Курьер в пути',AWAITING_WEIGH:'Ожидает веса',DISCREPANCY:'Расхождение мешков',WEIGHED:'Взвешено'};
-async function renderRecords(){const el=$('recordList');el.replaceChildren();const list=(remote.records||[]).filter(r=>r.status!=='WEIGHED');
+const statusNames={IN_TRANSIT:'Курьер в пути',AWAITING_WEIGH:'Ожидает веса',DISCREPANCY:'Расхождение мешков',WEIGHED:'Взвешено',ACCEPTED_ITEMS:'Принято поштучно'};
+async function renderRecords(){const el=$('recordList');el.replaceChildren();const list=(remote.records||[]).filter(r=>!['WEIGHED','ACCEPTED_ITEMS'].includes(r.status));
  if(!list.length){el.append(selectText('div','Незавершённых записей нет.'));return;}
  for(const r of list){const card=document.createElement('div');card.className='record';card.append(selectText('strong',r.client));
   const line=`${r.pickupBags||r.receivedBags||'?'} меш. (курьер) / ${r.receivedBags||'—'} (офис) · ${localDate(r.date)}`;
@@ -113,7 +176,8 @@ async function renderQueue(){let list=[];try{list=await queueAll();}catch(e){mes
  $('queueCount').textContent='Очередь: '+list.length;const el=$('localQueue');el.replaceChildren();
  if(!list.length){el.append(selectText('div','Все операции на этом телефоне подтверждены сервером.'));return;}
  for(const r of list){const card=document.createElement('div');card.className='record';card.append(selectText('strong',(clientById(r.data.clientId)?.name)||r.data.clientId||r.recordId));
-  const data=r.type+' · '+(r.data.bags||'')+' меш. · '+localDate(r.at);
+  const qty=r.data.items?.length? r.data.items.map(i=>i.qty).reduce((a,b)=>a+b,0)+' изд.':(r.data.bags||'')+' меш.';
+  const data=r.type+' · '+qty+' · '+localDate(r.at);
   card.append(selectText('span',data));card.lastChild.className='meta';
   card.append(selectText('span',r.localStatus==='REJECTED'?'Ошибка: '+r.localError:'Не подтверждено сервером. Сохранено на телефоне.'));
   card.lastChild.className=r.localStatus==='REJECTED'?'error':'meta';
@@ -123,7 +187,7 @@ async function renderQueue(){let list=[];try{list=await queueAll();}catch(e){mes
  }
 }
 async function submitLocal(type,data,recordId){const op={opId:nowId(),recordId:recordId||nowId(),type,at:new Date().toISOString(),data,localStatus:'WAITING',localError:''};
- await queueAdd(op);await renderQueue();message('Сохранено НА ТЕЛЕФОНЕ. До подтверждения отправки не удаляйте данные приложения.');
+ await queueAdd(op);await renderQueue();message('Сохранено на телефоне. Ожидает отправки в Google Таблицу.');
  if(navigator.onLine)syncQueue();return op;
 }
 function promptBags(defaultBags){const raw=prompt('Сколько мешков фактически привезено?',String(defaultBags||1));if(raw===null)return null;return num(raw,'мешки',1,200,false);}
@@ -136,19 +200,41 @@ async function receiveRecord(r){try{
  }catch(e){message(errorText(e),true);}}
 async function weighRecord(r){try{const weight=promptKilos();if(weight!==null)await submitLocal('WEIGH',{weight},r.id);}catch(e){message(errorText(e),true);}}
 async function resolveRecord(r){const note=prompt('Укажите причину расхождения и решение:','');if(note===null||!note.trim())return;await submitLocal('RESOLVE',{note},r.id);}
-function buildForms(){
- $('officeForm').addEventListener('submit',async e=>{e.preventDefault();try{
-  if(!hasRole('OFFICE'))throw Error('Нет доступа к приёмке');
-  const data={clientId:$('officeClient').value,bags:num($('officeBags').value,'мешки',1,200,false),mode:$('officeMode').value,note:$('officeNote').value};
-  if(data.mode==='BEFORE')data.weight=num($('officeWeight').value,'вес',.1,1000,true);
-  await submitLocal('DIRECT',data);$('officeWeight').value='';$('officeNote').value='';$('officeBags').value='1';
- }catch(e){message(errorText(e),true);}});
- $('courierForm').addEventListener('submit',async e=>{e.preventDefault();try{
-  if(!hasRole('COURIER'))throw Error('Нет доступа курьера');
-  const data={clientId:$('courierClient').value,bags:num($('courierBags').value,'мешки',1,200,false),note:$('courierNote').value};
-  await submitLocal('PICKUP',data);$('courierNote').value='';$('courierBags').value='1';
- }catch(e){message(errorText(e),true);}});
+function renderOfficeHistory(){
+  const list=(remote.records||[]).filter(r=>r.source==='DIRECT'&&['WEIGHED','ACCEPTED_ITEMS'].includes(r.status)).slice(0,7);
+  const el=$('officeHistory');el.replaceChildren();
+  if(!list.length){el.append(selectText('div','Сохранённых поступлений пока нет.'));return;}
+  for(const r of list){const row=document.createElement('div');row.className='record historyrow';
+    row.append(selectText('strong',r.client));
+    const text=r.accountType==='PIECE'?r.itemsCount+' изд.':(r.receivedBags||0)+' меш. · '+(r.weight||0)+' кг';
+    row.append(selectText('span',text+' · '+localDate(r.date)));row.lastChild.className='meta';el.append(row);
+  }
 }
+function buildForms(){
+ $('officeForm').addEventListener('submit',async e=>{
+  e.preventDefault();const submit=$('officeSubmit');if(submit.disabled)return;submit.disabled=true;
+  try{
+   if(!hasRole('OFFICE'))throw Error('Нет доступа к приёмке');
+   const cid=$('officeClient').value,c=clientById(cid);
+   if(!c)throw Error('Выберите клиента');
+   const data={clientId:cid,note:$('officeNote').value};
+   if(accountType(c)==='PIECE'){data.items=collectItems();}
+   else {data.bags=num($('officeBags').value,'мешки',1,200,false);data.weight=num($('officeWeight').value,'вес',.1,1000,true);}
+   const op=await submitLocal('DIRECT',data);lastOfficeOpId=op.opId;
+   const descr=accountType(c)==='PIECE'?data.items.reduce((a,i)=>a+i.qty,0)+' изд.':data.bags+' меш., '+data.weight+' кг';
+   officeStatus('Сохранено на телефоне: '+c.name+' — '+descr+'. Ожидает подтверждения сервера.');
+   resetOfficeForm();$('officeSearch').focus();
+  }catch(err){message(errorText(err),true);}finally{submit.disabled=false;}
+ });
+ $('courierForm').addEventListener('submit',async e=>{e.preventDefault();const submit=e.target.querySelector('button[type="submit"]');if(submit.disabled)return;submit.disabled=true;
+  try{if(!hasRole('COURIER'))throw Error('Нет доступа курьера');
+   if(!clientById($('courierClient').value))throw Error('Выберите клиента');
+   const data={clientId:$('courierClient').value,bags:num($('courierBags').value,'мешки',1,200,false),note:$('courierNote').value};
+   await submitLocal('PICKUP',data);$('courierForm').reset();$('courierClient').value='';
+  }catch(err){message(errorText(err),true);}finally{submit.disabled=false;}
+ });
+}
+
 async function init(){
  if('serviceWorker' in navigator)navigator.serviceWorker.register('./sw.js').catch(e=>message('Не удалось включить офлайн-запуск: '+errorText(e),true));
  $('endpoint').value=config.endpoint||'';$('token').value=config.token||'';
@@ -159,11 +245,11 @@ async function init(){
   try{await refreshRemote();if(navigator.storage?.persist)await navigator.storage.persist();message('Подключено. Теперь добавьте приложение на главный экран телефона.');switchTab(hasRole('OFFICE')?'office':'courier');}
   catch(e){config=old;localStorage.setItem(STORE,JSON.stringify(config));message('Не удалось проверить подключение: '+errorText(e),true);}
  });
- $('syncBtn').addEventListener('click',syncQueue);$('refreshBtn').addEventListener('click',async()=>{try{await refreshRemote();message('Список обновлён.');}catch(e){message(errorText(e),true);}});
+ $('syncBtn').addEventListener('click',()=>syncQueue(true));$('refreshBtn').addEventListener('click',async()=>{try{await refreshRemote();message('Список обновлён.');}catch(e){message(errorText(e),true);}});
  $('recheck').addEventListener('click',async()=>{try{await refreshRemote();message('Соединение работает.');}catch(e){message(errorText(e),true);}});
  $('showSetup').addEventListener('click',()=>{$('setup').hidden=false;message('Перед заменой токена дождитесь нулевой очереди.',true);});
  document.querySelectorAll('.tabs button').forEach(b=>b.addEventListener('click',()=>switchTab(b.dataset.tab)));
- $('officeClient').addEventListener('change',adaptOfficeMode);$('officeMode').addEventListener('change',weightVisibility);
+ $('officeClient').addEventListener('change',renderOfficeFields);$('officeSearch').addEventListener('input',()=>{populateClientSelect('officeClient',remote.clients||[],$('officeSearch').value);renderOfficeFields();});
  window.addEventListener('online',()=>{renderNetwork();syncQueue();});window.addEventListener('offline',renderNetwork);
  document.addEventListener('visibilitychange',()=>{if(!document.hidden&&navigator.onLine)syncQueue();});
  renderNetwork();renderIdentity();renderClientOptions();buildForms();setAvailability();await renderQueue();await renderRecords();
