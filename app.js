@@ -95,7 +95,10 @@ function setAvailability(){const setup=!validSetup()||!remote.user;
  document.querySelectorAll('.view').forEach(el=>el.hidden=setup||el.id!==activeTab);
  document.querySelectorAll('.tabs button').forEach(btn=>btn.classList.toggle('active',btn.dataset.tab===activeTab));
  $('settingsUser').textContent=remote.user?`${remote.user.name} (${remote.user.role})`:'';
- const compatible=Number(remote.apiVersion||0)>=2; $('officeSubmit').disabled=!compatible; $('apiCompatibility').hidden=setup||compatible;
+ const compatible=Number(remote.apiVersion||0)>=2;
+ $('officeSubmit').disabled=!compatible;
+ $('apiCompatibility').hidden=setup||compatible;
+ if(!compatible) $('apiCompatibilityText').textContent='Сервер не подтвердил версию 1.1 (API: '+(remote.apiVersion??'не определена')+'). Нажмите «Проверить сервер». Если предупреждение останется, в Apps Script обновите существующее развёртывание до новой версии.';
  const cBtn=document.querySelector('[data-tab="courier"]'),oBtn=document.querySelector('[data-tab="office"]');
  cBtn.disabled=!hasRole('COURIER');oBtn.disabled=!hasRole('OFFICE');
  if(!setup&&((activeTab==='office'&&!hasRole('OFFICE'))||(activeTab==='courier'&&!hasRole('COURIER'))))switchTab(hasRole('OFFICE')?'office':'courier');
@@ -103,17 +106,17 @@ function setAvailability(){const setup=!validSetup()||!remote.user;
 function renderIdentity(){const u=remote.user;$('identity').textContent=u?u.name+' · '+u.role:'Не настроено';}
 function renderNetwork(){$('network').textContent=navigator.onLine?'Связь может быть доступна':'Офлайн';}
 function renderClientOptions(){
-  populateClientSelect('officeClient',(remote.clients||[]),$('officeSearch').value);
+  populateClientSelect('officeClient',(remote.clients||[]));
   populateClientSelect('courierClient',(remote.clients||[]).filter(c=>c.accountType!=='PIECE'));
   renderOfficeFields();
 }
-function populateClientSelect(id,clients,filter=''){
-  const el=$(id),prior=el.value,query=filter.trim().toLocaleLowerCase('ru');
+function populateClientSelect(id,clients){
+  const el=$(id),prior=el.value;
   el.replaceChildren();const empty=document.createElement('option');empty.value='';empty.textContent='Выберите клиента';el.append(empty);
-  for(const c of clients.filter(x=>x.name.toLocaleLowerCase('ru').includes(query))){
+  for(const c of clients){
     const opt=document.createElement('option');opt.value=c.id;opt.textContent=c.name;el.append(opt);
   }
-  el.value=clients.some(x=>x.id===prior && x.name.toLocaleLowerCase('ru').includes(query))?prior:'';
+  el.value=clients.some(x=>x.id===prior)?prior:'';
 }
 function clientById(id){return(remote.clients||[]).find(c=>c.id===id);}
 function accountType(c){return c?.accountType==='PIECE'?'PIECE':'WEIGHT';}
@@ -153,7 +156,7 @@ function collectItems(){
   return items;
 }
 function resetOfficeForm(){
-  $('officeForm').reset();$('officeSearch').value='';populateClientSelect('officeClient',remote.clients||[]);$('officeClient').value='';
+  $('officeForm').reset();populateClientSelect('officeClient',remote.clients||[]);$('officeClient').value='';
   $('officeBags').value='1';$('officeWeight').value='';$('officeNote').value='';renderOfficeFields();
 }
 function switchTab(tab){activeTab=tab;setAvailability();if(tab==='pending'){renderRecords();renderQueue();}}
@@ -223,7 +226,7 @@ function buildForms(){
    const op=await submitLocal('DIRECT',data);lastOfficeOpId=op.opId;
    const descr=accountType(c)==='PIECE'?data.items.reduce((a,i)=>a+i.qty,0)+' изд.':data.bags+' меш., '+data.weight+' кг';
    officeStatus('Сохранено на телефоне: '+c.name+' — '+descr+'. Ожидает подтверждения сервера.');
-   resetOfficeForm();$('officeSearch').focus();
+   resetOfficeForm();$('officeClient').focus();
   }catch(err){message(errorText(err),true);}finally{submit.disabled=false;}
  });
  $('courierForm').addEventListener('submit',async e=>{e.preventDefault();const submit=e.target.querySelector('button[type="submit"]');if(submit.disabled)return;submit.disabled=true;
@@ -246,10 +249,11 @@ async function init(){
   catch(e){config=old;localStorage.setItem(STORE,JSON.stringify(config));message('Не удалось проверить подключение: '+errorText(e),true);}
  });
  $('syncBtn').addEventListener('click',()=>syncQueue(true));$('refreshBtn').addEventListener('click',async()=>{try{await refreshRemote();message('Список обновлён.');}catch(e){message(errorText(e),true);}});
- $('recheck').addEventListener('click',async()=>{try{await refreshRemote();message('Соединение работает.');}catch(e){message(errorText(e),true);}});
+ $('recheck').addEventListener('click',async()=>{try{await refreshRemote();message('Соединение работает. Версия API: '+(remote.apiVersion??'не определена'));}catch(e){message(errorText(e),true);}});
+ $('apiRetry').addEventListener('click',async()=>{const btn=$('apiRetry');btn.disabled=true;try{await refreshRemote();if(Number(remote.apiVersion||0)>=2){message('Серверная версия 1.1 подтверждена. Приёмка доступна.');}else{message('Сервер вернул устаревшую версию API: '+(remote.apiVersion??'не определена')+'. Проверьте развёртывание Apps Script.',true);}}catch(e){message('Не удалось проверить сервер: '+errorText(e),true);}finally{btn.disabled=false;}});
  $('showSetup').addEventListener('click',()=>{$('setup').hidden=false;message('Перед заменой токена дождитесь нулевой очереди.',true);});
  document.querySelectorAll('.tabs button').forEach(b=>b.addEventListener('click',()=>switchTab(b.dataset.tab)));
- $('officeClient').addEventListener('change',renderOfficeFields);$('officeSearch').addEventListener('input',()=>{populateClientSelect('officeClient',remote.clients||[],$('officeSearch').value);renderOfficeFields();});
+ $('officeClient').addEventListener('change',renderOfficeFields);
  window.addEventListener('online',()=>{renderNetwork();syncQueue();});window.addEventListener('offline',renderNetwork);
  document.addEventListener('visibilitychange',()=>{if(!document.hidden&&navigator.onLine)syncQueue();});
  renderNetwork();renderIdentity();renderClientOptions();buildForms();setAvailability();await renderQueue();await renderRecords();
