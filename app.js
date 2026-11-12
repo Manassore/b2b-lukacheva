@@ -199,19 +199,41 @@ async function receiveRecord(r){try{
  }catch(e){message(errorText(e),true);}}
 async function weighRecord(r){try{const weight=promptKilos();if(weight!==null)await submitLocal('WEIGH',{weight},r.id);}catch(e){message(errorText(e),true);}}
 async function resolveRecord(r){const note=prompt('Укажите причину расхождения и решение:','');if(note===null||!note.trim())return;await submitLocal('RESOLVE',{note},r.id);}
-function buildForms(){
- $('officeForm').addEventListener('submit',async e=>{e.preventDefault();try{
-  if(!hasRole('OFFICE'))throw Error('Нет доступа к приёмке');
-  const data={clientId:$('officeClient').value,bags:num($('officeBags').value,'мешки',1,200,false),mode:$('officeMode').value,note:$('officeNote').value};
-  if(data.mode==='BEFORE')data.weight=num($('officeWeight').value,'вес',.1,1000,true);
-  await submitLocal('DIRECT',data);$('officeWeight').value='';$('officeNote').value='';$('officeBags').value='1';
- }catch(e){message(errorText(e),true);}});
- $('courierForm').addEventListener('submit',async e=>{e.preventDefault();try{
-  if(!hasRole('COURIER'))throw Error('Нет доступа курьера');
-  const data={clientId:$('courierClient').value,bags:num($('courierBags').value,'мешки',1,200,false),note:$('courierNote').value};
-  await submitLocal('PICKUP',data);$('courierNote').value='';$('courierBags').value='1';
- }catch(e){message(errorText(e),true);}});
+function renderOfficeHistory(){
+  const list=(remote.records||[]).filter(r=>r.source==='DIRECT'&&['WEIGHED','ACCEPTED_ITEMS'].includes(r.status)).slice(0,7);
+  const el=$('officeHistory');el.replaceChildren();
+  if(!list.length){el.append(selectText('div','Сохранённых поступлений пока нет.'));return;}
+  for(const r of list){const row=document.createElement('div');row.className='record historyrow';
+    row.append(selectText('strong',r.client));
+    const text=r.accountType==='PIECE'?r.itemsCount+' изд.':(r.receivedBags||0)+' меш. · '+(r.weight||0)+' кг';
+    row.append(selectText('span',text+' · '+localDate(r.date)));row.lastChild.className='meta';el.append(row);
+  }
 }
+function buildForms(){
+ $('officeForm').addEventListener('submit',async e=>{
+  e.preventDefault();const submit=$('officeSubmit');if(submit.disabled)return;submit.disabled=true;
+  try{
+   if(!hasRole('OFFICE'))throw Error('Нет доступа к приёмке');
+   const cid=$('officeClient').value,c=clientById(cid);
+   if(!c)throw Error('Выберите клиента');
+   const data={clientId:cid,note:$('officeNote').value};
+   if(accountType(c)==='PIECE'){data.items=collectItems();}
+   else {data.bags=num($('officeBags').value,'мешки',1,200,false);data.weight=num($('officeWeight').value,'вес',.1,1000,true);}
+   const op=await submitLocal('DIRECT',data);lastOfficeOpId=op.opId;
+   const descr=accountType(c)==='PIECE'?data.items.reduce((a,i)=>a+i.qty,0)+' изд.':data.bags+' меш., '+data.weight+' кг';
+   officeStatus('Сохранено на телефоне: '+c.name+' — '+descr+'. Ожидает подтверждения сервера.');
+   resetOfficeForm();$('officeSearch').focus();
+  }catch(err){message(errorText(err),true);}finally{submit.disabled=false;}
+ });
+ $('courierForm').addEventListener('submit',async e=>{e.preventDefault();const submit=e.target.querySelector('button[type="submit"]');if(submit.disabled)return;submit.disabled=true;
+  try{if(!hasRole('COURIER'))throw Error('Нет доступа курьера');
+   if(!clientById($('courierClient').value))throw Error('Выберите клиента');
+   const data={clientId:$('courierClient').value,bags:num($('courierBags').value,'мешки',1,200,false),note:$('courierNote').value};
+   await submitLocal('PICKUP',data);$('courierForm').reset();$('courierClient').value='';
+  }catch(err){message(errorText(err),true);}finally{submit.disabled=false;}
+ });
+}
+
 async function init(){
  if('serviceWorker' in navigator)navigator.serviceWorker.register('./sw.js').catch(e=>message('Не удалось включить офлайн-запуск: '+errorText(e),true));
  $('endpoint').value=config.endpoint||'';$('token').value=config.token||'';
@@ -222,11 +244,11 @@ async function init(){
   try{await refreshRemote();if(navigator.storage?.persist)await navigator.storage.persist();message('Подключено. Теперь добавьте приложение на главный экран телефона.');switchTab(hasRole('OFFICE')?'office':'courier');}
   catch(e){config=old;localStorage.setItem(STORE,JSON.stringify(config));message('Не удалось проверить подключение: '+errorText(e),true);}
  });
- $('syncBtn').addEventListener('click',syncQueue);$('refreshBtn').addEventListener('click',async()=>{try{await refreshRemote();message('Список обновлён.');}catch(e){message(errorText(e),true);}});
+ $('syncBtn').addEventListener('click',()=>syncQueue(true));$('refreshBtn').addEventListener('click',async()=>{try{await refreshRemote();message('Список обновлён.');}catch(e){message(errorText(e),true);}});
  $('recheck').addEventListener('click',async()=>{try{await refreshRemote();message('Соединение работает.');}catch(e){message(errorText(e),true);}});
  $('showSetup').addEventListener('click',()=>{$('setup').hidden=false;message('Перед заменой токена дождитесь нулевой очереди.',true);});
  document.querySelectorAll('.tabs button').forEach(b=>b.addEventListener('click',()=>switchTab(b.dataset.tab)));
- $('officeClient').addEventListener('change',adaptOfficeMode);$('officeMode').addEventListener('change',weightVisibility);
+ $('officeClient').addEventListener('change',renderOfficeFields);$('officeSearch').addEventListener('input',()=>{populateClientSelect('officeClient',remote.clients||[],$('officeSearch').value);renderOfficeFields();});
  window.addEventListener('online',()=>{renderNetwork();syncQueue();});window.addEventListener('offline',renderNetwork);
  document.addEventListener('visibilitychange',()=>{if(!document.hidden&&navigator.onLine)syncQueue();});
  renderNetwork();renderIdentity();renderClientOptions();buildForms();setAvailability();await renderQueue();await renderRecords();
