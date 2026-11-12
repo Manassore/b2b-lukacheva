@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="referrer" content="no-referrer">
+  <meta name="theme-color" content="#184a58">
+  <meta name="description" content="Учёт B2B-поступлений белья на Лукачёва с офлайн-очередью">
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="stylesheet" href="styles.css">
+  <title>B2B · Лукачёва</title>
+</head>
+<body>
+  <header class="top"><div class="brand"><strong>B2B · Лукачёва</strong><small>Поступления и курьер</small></div><div class="connect"><span id="network">Проверка…</span><small id="identity">Не настроено</small></div></header>
+  <div class="syncbar"><span id="queueCount">Очередь: 0</span><button type="button" id="syncBtn" class="outline">Отправить</button></div>
+  <main>
+    <div id="message" class="notice" hidden></div>
+    <section id="setup" class="panel" hidden>
+      <h1>Настройка телефона</h1>
+      <p>Один раз подключитесь к Wi-Fi, введите адрес Google Apps Script и персональный токен сотрудника.</p>
+      <label for="endpoint">Адрес веб-приложения Google Apps Script</label>
+      <input id="endpoint" inputmode="url" placeholder="https://script.google.com/macros/s/.../exec" autocomplete="off">
+      <label for="token">Токен устройства</label>
+      <input id="token" type="password" placeholder="Выдан владельцем" autocomplete="off">
+      <button type="button" id="saveSetup" class="primary">Сохранить и проверить</button>
+      <p class="muted">Токен хранится только на этом устройстве. Не отправляйте его в чат и не публикуйте в GitHub.</p>
+    </section>
+    <nav id="nav" class="tabs" hidden>
+      <button data-tab="office" type="button" class="active">Приёмка</button>
+      <button data-tab="courier" type="button">Курьер</button>
+      <button data-tab="pending" type="button">В работе</button>
+      <button data-tab="settings" type="button">Настройки</button>
+    </nav>
+    <section id="office" class="panel view" hidden>
+      <h1>Приёмка в офисе</h1>
+      <form id="officeForm">
+        <label for="officeClient">Клиент</label><select id="officeClient" required></select>
+        <label for="officeBags">Мешков</label><input id="officeBags" type="number" min="1" max="200" step="1" value="1" required>
+        <label for="officeMode">Когда взвешиваем</label><select id="officeMode"><option value="BEFORE">При приёмке</option><option value="AFTER">После стирки и сушки</option></select>
+        <div id="officeWeightWrap"><label for="officeWeight">Общий вес, кг</label><input id="officeWeight" type="text" inputmode="decimal" placeholder="Например, 18,6"></div>
+        <label for="officeNote">Комментарий (необязательно)</label><textarea id="officeNote" rows="2" maxlength="300"></textarea>
+        <button class="primary" type="submit">Сохранить поступление</button>
+      </form>
+    </section>
+    <section id="courier" class="panel view" hidden>
+      <h1>Забор у клиента</h1><p class="muted">Здесь указываются только клиент и количество мешков. Вес внесёт офис.</p>
+      <form id="courierForm">
+        <label for="courierClient">Клиент</label><select id="courierClient" required></select>
+        <label for="courierBags">Мешков забрано</label><input id="courierBags" type="number" min="1" max="200" step="1" value="1" required>
+        <label for="courierNote">Комментарий</label><textarea id="courierNote" rows="2" maxlength="300"></textarea>
+        <button class="primary" type="submit">Зафиксировать забор</button>
+      </form>
+    </section>
+    <section id="pending" class="panel view" hidden>
+      <div class="headrow"><h1>В работе</h1><button class="outline small" id="refreshBtn" type="button">Обновить</button></div>
+      <p class="muted">Для приёмки мешков курьера его забор сначала должен попасть на сервер. Если интернет отсутствует, курьер увидит запись в собственной очереди.</p>
+      <h2>Незавершённые поступления</h2><div id="recordList" class="records"></div>
+      <h2>Местная очередь телефона</h2><div id="localQueue" class="records"></div>
+    </section>
+    <section id="settings" class="panel view" hidden>
+      <h1>Настройки</h1><p class="muted" id="settingsUser"></p>
+      <p>Непереданные записи остаются в памяти этого телефона. Не очищайте данные браузера и не удаляйте приложение, пока очередь не станет нулевой.</p>
+      <button type="button" id="recheck" class="outline">Проверить подключение</button>
+      <button type="button" id="showSetup" class="text-button">Изменить адрес или токен</button>
+      <p class="muted">Рекомендуется установить приложение на главный экран Chrome через меню браузера.</p>
+    </section>
+  </main>
+  <footer id="footer">Первый запуск требует интернета. Затем приёмку можно выполнять офлайн.</footer>
+  <script src="app.js" defer></script>
+</body>
+</html>

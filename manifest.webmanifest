@@ -1,0 +1,25 @@
+{
+  "name": "B2B Приёмка — Лукачёва",
+  "short_name": "B2B Лукачёва",
+  "description": "Учёт мешков и веса с офлайн-очередью для курьера и офиса",
+  "id": "./",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f4f7f8",
+  "theme_color": "#184a58",
+  "icons": [
+    {
+      "src": "icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}
