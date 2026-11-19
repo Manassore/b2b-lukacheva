@@ -127,6 +127,10 @@ function renderClientOptions(){
   const itemValues=new Map([...document.querySelectorAll('#officeItems input[data-service]')].map(e=>[e.dataset.service,e.value]));
   const priorClient=$('officeClient').value;
   populateClientSelect('officeClient',remote.clients||[]);
+  if(priorClient && $('officeClient').value!==priorClient){
+    $('officeBags').value='1';$('officeWeight').value='';$('officeNote').value='';
+    message('Выбранный клиент больше не активен или исключён из приёмки. Проверьте актуальный список.',true);
+  }
   renderOfficeFields();
   if($('officeClient').value===priorClient){
     for(const input of document.querySelectorAll('#officeItems input[data-service]')){
