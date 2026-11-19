@@ -85,7 +85,7 @@ async function syncQueue(manual=false){if(syncing||!validSetup())return;
     message('Успешно отправлено в Google Таблицу: '+sent+'. В очереди осталось: '+rest+(rejected?'. Ошибок: '+rejected:'')+'.',!!rest);
   }else if(rest && (manual||rejected))message('Не отправлено. На телефоне сохранено: '+rest+'; серверных ошибок: '+rejected+'.',true);
  }catch(e){message('Синхронизация: '+errorText(e),true);}
- finally{syncing=false;$('syncBtn').disabled=false;$('syncBtn').textContent='Отправить';await renderQueue();await renderRecords();}
+ finally{syncing=false;$('syncBtn').disabled=false;$('syncBtn').textContent='Отправить';await renderQueue();}
 }
 async function refreshRemote(){
  try{
@@ -93,7 +93,7 @@ async function refreshRemote(){
   if(!r.ok)throw Error(r.error||'Ошибка доступа');
   serverProbe={state:'live',error:'',apiVersion:r.apiVersion??null};
   remote=r;lastDirectoryCheck=Date.now();localStorage.setItem(CACHE,JSON.stringify(r));
-  renderIdentity();renderClientOptions();renderRecords();renderOfficeHistory();setAvailability();
+  renderIdentity();renderClientOptions();renderOfficeHistory();setAvailability();
  }catch(e){
   serverProbe={state:'error',error:errorText(e)};
   setAvailability();
@@ -212,19 +212,6 @@ function resetOfficeForm(){
 function switchTab(tab){activeTab=tab;setAvailability();if(tab==='pending')renderQueue();}
 function selectText(p,s){const el=document.createElement(p);el.textContent=s;return el;}
 function button(text,fun){const b=document.createElement('button');b.className='outline small';b.textContent=text;b.type='button';b.addEventListener('click',fun);return b;}
-const statusNames={IN_TRANSIT:'Курьер в пути',AWAITING_WEIGH:'Ожидает веса',DISCREPANCY:'Расхождение мешков',WEIGHED:'Взвешено',ACCEPTED_ITEMS:'Принято поштучно'};
-async function renderRecords(){const el=$('recordList');if(!el)return;el.replaceChildren();const list=(remote.records||[]).filter(r=>!['WEIGHED','ACCEPTED_ITEMS'].includes(r.status));
- if(!list.length){el.append(selectText('div','Незавершённых записей нет.'));return;}
- for(const r of list){const card=document.createElement('div');card.className='record';card.append(selectText('strong',r.client));
-  const line=`${r.pickupBags||r.receivedBags||'?'} меш. (курьер) / ${r.receivedBags||'—'} (офис) · ${localDate(r.date)}`;
-  card.append(selectText('span',line));card.lastChild.className='meta';
-  card.append(selectText('span',statusNames[r.status]||r.status));card.lastChild.className='tag';
-  if(r.status==='IN_TRANSIT'&&hasRole('OFFICE'))card.append(button('Принять у курьера',()=>receiveRecord(r)));
-  if(r.status==='AWAITING_WEIGH'&&hasRole('OFFICE'))card.append(button('Добавить вес',()=>weighRecord(r)));
-  if(r.status==='DISCREPANCY'&&hasRole('OWNER'))card.append(button('Разрешить расхождение',()=>resolveRecord(r)));
-  el.append(card);
- }
-}
 async function renderQueue(){let list=[];try{list=await queueAll();}catch(e){message('Нет доступа к локальному хранилищу. Офлайн-приёмка невозможна: '+errorText(e),true);}
  $('queueCount').textContent='Очередь: '+list.length;const el=$('localQueue');el.replaceChildren();
  if(!list.length){el.append(selectText('div','Все операции на этом телефоне подтверждены сервером.'));return;}
@@ -243,16 +230,6 @@ async function submitLocal(type,data,recordId){const op={opId:nowId(),recordId:r
  await queueAdd(op);await renderQueue();message('Сохранено на телефоне. Ожидает отправки в Google Таблицу.');
  if(navigator.onLine)syncQueue();return op;
 }
-function promptBags(defaultBags){const raw=prompt('Сколько мешков фактически привезено?',String(defaultBags||1));if(raw===null)return null;return num(raw,'мешки',1,200,false);}
-function promptKilos(){const raw=prompt('Общий вес, кг (например, 24,6):','');if(raw===null)return null;return num(raw,'вес',.1,1000,true);}
-async function receiveRecord(r){try{
- const bags=promptBags(r.pickupBags);if(bags===null)return;
- const data={bags};if(r.mode==='BEFORE'){const weight=promptKilos();if(weight===null)return;data.weight=weight;}
- if(bags!==r.pickupBags&&!confirm(`У курьера было ${r.pickupBags} меш., принято ${bags}. Сохранить расхождение?`))return;
- await submitLocal('RECEIVE',data,r.id);
- }catch(e){message(errorText(e),true);}}
-async function weighRecord(r){try{const weight=promptKilos();if(weight!==null)await submitLocal('WEIGH',{weight},r.id);}catch(e){message(errorText(e),true);}}
-async function resolveRecord(r){const note=prompt('Укажите причину расхождения и решение:','');if(note===null||!note.trim())return;await submitLocal('RESOLVE',{note},r.id);}
 function renderOfficeHistory(){
   const list=(remote.records||[]).filter(r=>r.source==='DIRECT'&&['WEIGHED','ACCEPTED_ITEMS'].includes(r.status)).slice(0,7);
   const el=$('officeHistory');el.replaceChildren();
@@ -305,7 +282,7 @@ async function init(){
  document.addEventListener('visibilitychange',()=>{if(!document.hidden){refreshOnReturn();if(navigator.onLine)syncQueue();}});
  window.addEventListener('pageshow',()=>{refreshOnReturn();});
  window.addEventListener('focus',()=>{refreshOnReturn();});
- renderNetwork();renderIdentity();renderClientOptions();buildForms();setAvailability();await renderQueue();await renderRecords();
+ renderNetwork();renderIdentity();renderClientOptions();buildForms();setAvailability();await renderQueue();
  if(validSetup()){
   try{await refreshRemote();if(navigator.onLine)syncQueue();}
   catch(e){message('Работаем с сохранённым справочником. Проверка связи: '+errorText(e),true);}
