@@ -6,7 +6,7 @@ const CACHE='lukacheva-b2b-remote-v1';
 const DB_NAME='lukacheva-b2b-offline-v1';
 let config=JSON.parse(localStorage.getItem(STORE)||'{}');
 let remote=JSON.parse(localStorage.getItem(CACHE)||'{}');
-let activeTab='office',syncing=false,jsonpSeq=0;let lastOfficeOpId='';
+let activeTab='office',syncing=false,jsonpSeq=0;let lastOfficeOpId='';let serverProbe={state:'not_checked',error:''};
 
 let messageTimer;
 function message(s,warning=false){
@@ -87,8 +87,18 @@ async function syncQueue(manual=false){if(syncing||!validSetup())return;
  }catch(e){message('Синхронизация: '+errorText(e),true);}
  finally{syncing=false;$('syncBtn').disabled=false;$('syncBtn').textContent='Отправить';await renderQueue();await renderRecords();}
 }
-async function refreshRemote(){const r=await jsonp('bootstrap');if(!r.ok)throw Error(r.error||'Ошибка доступа');
- remote=r;localStorage.setItem(CACHE,JSON.stringify(r));renderIdentity();renderClientOptions();renderRecords();renderOfficeHistory();setAvailability();
+async function refreshRemote(){
+ try{
+  const r=await jsonp('bootstrap');
+  if(!r.ok)throw Error(r.error||'Ошибка доступа');
+  serverProbe={state:'live',error:'',apiVersion:r.apiVersion??null};
+  remote=r;localStorage.setItem(CACHE,JSON.stringify(r));
+  renderIdentity();renderClientOptions();renderRecords();renderOfficeHistory();setAvailability();
+ }catch(e){
+  serverProbe={state:'error',error:errorText(e)};
+  setAvailability();
+  throw e;
+ }
 }
 function setAvailability(){const setup=!validSetup()||!remote.user;
  $('setup').hidden=!setup;$('nav').hidden=setup;
@@ -98,7 +108,14 @@ function setAvailability(){const setup=!validSetup()||!remote.user;
  const compatible=Number(remote.apiVersion||0)>=2;
  $('officeSubmit').disabled=!compatible;
  $('apiCompatibility').hidden=setup||compatible;
- if(!compatible) $('apiCompatibilityText').textContent='Сервер не подтвердил версию 1.1 (API: '+(remote.apiVersion??'не определена')+'). Нажмите «Проверить сервер». Если предупреждение останется, в Apps Script обновите существующее развёртывание до новой версии.';
+ if(!compatible){
+   const detail=serverProbe.state==='live'
+    ? 'Сервер ответил, но не передал apiVersion=2 (получено: '+(serverProbe.apiVersion??'не определена')+'). Обычно это старое развёртывание /exec.'
+    : serverProbe.state==='error'
+    ? 'Не удалось получить свежий ответ сервера: '+serverProbe.error+'. Показаны данные, сохранённые на телефоне.'
+    : 'Пока используется сохранённый справочник; свежая версия сервера ещё не проверена.';
+   $('apiCompatibilityText').textContent=detail+' Нажмите «Проверить сервер».';
+ }
  const cBtn=document.querySelector('[data-tab="courier"]'),oBtn=document.querySelector('[data-tab="office"]');
  cBtn.disabled=!hasRole('COURIER');oBtn.disabled=!hasRole('OFFICE');
  if(!setup&&((activeTab==='office'&&!hasRole('OFFICE'))||(activeTab==='courier'&&!hasRole('COURIER'))))switchTab(hasRole('OFFICE')?'office':'courier');
