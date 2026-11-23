@@ -6,7 +6,7 @@ const CACHE='lukacheva-b2b-remote-v1';
 const DB_NAME='lukacheva-b2b-offline-v1';
 let config=JSON.parse(localStorage.getItem(STORE)||'{}');
 let remote=JSON.parse(localStorage.getItem(CACHE)||'{}');
-let activeTab='office',syncing=false,jsonpSeq=0;let lastOfficeOpId='';let serverProbe={state:'not_checked',error:''};
+let activeTab='office',syncing=false,jsonpSeq=0;let lastOfficeOpId='';let serverProbe={state:'not_checked',error:''};let lastDirectoryCheck=0,refreshInFlight=false;
 
 let messageTimer;
 function message(s,warning=false){
@@ -85,15 +85,15 @@ async function syncQueue(manual=false){if(syncing||!validSetup())return;
     message('Успешно отправлено в Google Таблицу: '+sent+'. В очереди осталось: '+rest+(rejected?'. Ошибок: '+rejected:'')+'.',!!rest);
   }else if(rest && (manual||rejected))message('Не отправлено. На телефоне сохранено: '+rest+'; серверных ошибок: '+rejected+'.',true);
  }catch(e){message('Синхронизация: '+errorText(e),true);}
- finally{syncing=false;$('syncBtn').disabled=false;$('syncBtn').textContent='Отправить';await renderQueue();await renderRecords();}
+ finally{syncing=false;$('syncBtn').disabled=false;$('syncBtn').textContent='Отправить';await renderQueue();}
 }
 async function refreshRemote(){
  try{
   const r=await jsonp('bootstrap');
   if(!r.ok)throw Error(r.error||'Ошибка доступа');
   serverProbe={state:'live',error:'',apiVersion:r.apiVersion??null};
-  remote=r;localStorage.setItem(CACHE,JSON.stringify(r));
-  renderIdentity();renderClientOptions();renderRecords();renderOfficeHistory();setAvailability();
+  remote=r;lastDirectoryCheck=Date.now();localStorage.setItem(CACHE,JSON.stringify(r));
+  renderIdentity();renderClientOptions();renderOfficeHistory();setAvailability();
  }catch(e){
   serverProbe={state:'error',error:errorText(e)};
   setAvailability();
@@ -105,27 +105,58 @@ function setAvailability(){const setup=!validSetup()||!remote.user;
  document.querySelectorAll('.view').forEach(el=>el.hidden=setup||el.id!==activeTab);
  document.querySelectorAll('.tabs button').forEach(btn=>btn.classList.toggle('active',btn.dataset.tab===activeTab));
  $('settingsUser').textContent=remote.user?`${remote.user.name} (${remote.user.role})`:'';
- const compatible=Number(remote.apiVersion||0)>=2;
- $('officeSubmit').disabled=!compatible;
+ const compatible=Number(remote.apiVersion||0)>=3;
+ const selected=clientById($('officeClient').value);
+ $('officeSubmit').disabled=!compatible||accountType(selected)==='UNKNOWN'&&!!selected;
+ renderDirectoryStatus();
  $('apiCompatibility').hidden=setup||compatible;
  if(!compatible){
    const detail=serverProbe.state==='live'
-    ? 'Сервер ответил, но не передал apiVersion=2 (получено: '+(serverProbe.apiVersion??'не определена')+'). Обычно это старое развёртывание /exec.'
+    ? 'Сервер ответил, но не передал apiVersion=3 (получено: '+(serverProbe.apiVersion??'не определена')+'). Обычно это старое развёртывание /exec.'
     : serverProbe.state==='error'
     ? 'Не удалось получить свежий ответ сервера: '+serverProbe.error+'. Показаны данные, сохранённые на телефоне.'
     : 'Пока используется сохранённый справочник; свежая версия сервера ещё не проверена.';
    $('apiCompatibilityText').textContent=detail+' Нажмите «Проверить сервер».';
  }
- const cBtn=document.querySelector('[data-tab="courier"]'),oBtn=document.querySelector('[data-tab="office"]');
- cBtn.disabled=!hasRole('COURIER');oBtn.disabled=!hasRole('OFFICE');
- if(!setup&&((activeTab==='office'&&!hasRole('OFFICE'))||(activeTab==='courier'&&!hasRole('COURIER'))))switchTab(hasRole('OFFICE')?'office':'courier');
+ const oBtn=document.querySelector('[data-tab="office"]');oBtn.disabled=!hasRole('OFFICE');
+ if(!setup && activeTab==='office'&&!hasRole('OFFICE'))switchTab('pending');
 }
 function renderIdentity(){const u=remote.user;$('identity').textContent=u?u.name+' · '+u.role:'Не настроено';}
 function renderNetwork(){$('network').textContent=navigator.onLine?'Связь может быть доступна':'Офлайн';}
 function renderClientOptions(){
-  populateClientSelect('officeClient',(remote.clients||[]));
-  populateClientSelect('courierClient',(remote.clients||[]).filter(c=>c.accountType!=='PIECE'));
+  const itemValues=new Map([...document.querySelectorAll('#officeItems input[data-service]')].map(e=>[e.dataset.service,e.value]));
+  const priorClient=$('officeClient').value;
+  populateClientSelect('officeClient',remote.clients||[]);
+  if(priorClient && $('officeClient').value!==priorClient){
+    $('officeBags').value='1';$('officeWeight').value='';$('officeNote').value='';
+    message('Выбранный клиент больше не активен или исключён из приёмки. Проверьте актуальный список.',true);
+  }
   renderOfficeFields();
+  if($('officeClient').value===priorClient){
+    for(const input of document.querySelectorAll('#officeItems input[data-service]')){
+      if(itemValues.has(input.dataset.service))input.value=itemValues.get(input.dataset.service);
+    }
+    updateItemCount();
+  }
+}
+function renderDirectoryStatus(){
+  const el=$('clientDirectoryStatus');if(!el)return;
+  const stamp=remote.clientDirectoryTime||remote.serverTime;
+  const n=(remote.clients||[]).length;
+  if(serverProbe.state==='live'){
+    el.textContent='Клиентов: '+n+' · обновлено '+localDate(stamp)+' · источник: B2B-справочник';
+  }else{
+    el.textContent=(n?'Клиентов в сохранённом справочнике: '+n:'Клиентский справочник пока не загружен')+
+      (stamp?' · данные от '+localDate(stamp):'')+' · текущая проверка недоступна';
+  }
+}
+async function refreshOnReturn(){
+  if(refreshInFlight||!validSetup()||!navigator.onLine||document.hidden)return;
+  if(Date.now()-lastDirectoryCheck<12000)return;
+  refreshInFlight=true;
+  try{await refreshRemote();}
+  catch(e){message('Не удалось обновить клиентов. Используется последний сохранённый список: '+errorText(e),true);}
+  finally{refreshInFlight=false;}
 }
 function populateClientSelect(id,clients){
   const el=$(id),prior=el.value;
@@ -136,11 +167,13 @@ function populateClientSelect(id,clients){
   el.value=clients.some(x=>x.id===prior)?prior:'';
 }
 function clientById(id){return(remote.clients||[]).find(c=>c.id===id);}
-function accountType(c){return c?.accountType==='PIECE'?'PIECE':'WEIGHT';}
+function accountType(c){return c?.accountType==='PIECE'?'PIECE':c?.accountType==='WEIGHT'?'WEIGHT':'UNKNOWN';}
 function renderOfficeFields(){
-  const c=clientById($('officeClient').value),piece=accountType(c)==='PIECE';
-  $('officeWeightFields').hidden=piece;$('officePieceFields').hidden=!piece;
-  $('officeBags').required=!piece;$('officeWeight').required=!piece;
+  const c=clientById($('officeClient').value),mode=accountType(c),piece=mode==='PIECE',unknown=!!c&&mode==='UNKNOWN';
+  $('officeUnknownMode').hidden=!unknown;
+  $('officeWeightFields').hidden=piece||unknown;$('officePieceFields').hidden=!piece;
+  $('officeBags').required=!piece&&!unknown;$('officeWeight').required=!piece&&!unknown;
+  $('officeSubmit').disabled=Number(remote.apiVersion||0)<3||unknown;
   const list=$('officeItems');list.replaceChildren();
   if(!piece)return;
   const services=(remote.services||[]).filter(s=>s.clientId===c.id);
@@ -176,22 +209,9 @@ function resetOfficeForm(){
   $('officeForm').reset();populateClientSelect('officeClient',remote.clients||[]);$('officeClient').value='';
   $('officeBags').value='1';$('officeWeight').value='';$('officeNote').value='';renderOfficeFields();
 }
-function switchTab(tab){activeTab=tab;setAvailability();if(tab==='pending'){renderRecords();renderQueue();}}
+function switchTab(tab){activeTab=tab;setAvailability();if(tab==='pending')renderQueue();}
 function selectText(p,s){const el=document.createElement(p);el.textContent=s;return el;}
 function button(text,fun){const b=document.createElement('button');b.className='outline small';b.textContent=text;b.type='button';b.addEventListener('click',fun);return b;}
-const statusNames={IN_TRANSIT:'Курьер в пути',AWAITING_WEIGH:'Ожидает веса',DISCREPANCY:'Расхождение мешков',WEIGHED:'Взвешено',ACCEPTED_ITEMS:'Принято поштучно'};
-async function renderRecords(){const el=$('recordList');el.replaceChildren();const list=(remote.records||[]).filter(r=>!['WEIGHED','ACCEPTED_ITEMS'].includes(r.status));
- if(!list.length){el.append(selectText('div','Незавершённых записей нет.'));return;}
- for(const r of list){const card=document.createElement('div');card.className='record';card.append(selectText('strong',r.client));
-  const line=`${r.pickupBags||r.receivedBags||'?'} меш. (курьер) / ${r.receivedBags||'—'} (офис) · ${localDate(r.date)}`;
-  card.append(selectText('span',line));card.lastChild.className='meta';
-  card.append(selectText('span',statusNames[r.status]||r.status));card.lastChild.className='tag';
-  if(r.status==='IN_TRANSIT'&&hasRole('OFFICE'))card.append(button('Принять у курьера',()=>receiveRecord(r)));
-  if(r.status==='AWAITING_WEIGH'&&hasRole('OFFICE'))card.append(button('Добавить вес',()=>weighRecord(r)));
-  if(r.status==='DISCREPANCY'&&hasRole('OWNER'))card.append(button('Разрешить расхождение',()=>resolveRecord(r)));
-  el.append(card);
- }
-}
 async function renderQueue(){let list=[];try{list=await queueAll();}catch(e){message('Нет доступа к локальному хранилищу. Офлайн-приёмка невозможна: '+errorText(e),true);}
  $('queueCount').textContent='Очередь: '+list.length;const el=$('localQueue');el.replaceChildren();
  if(!list.length){el.append(selectText('div','Все операции на этом телефоне подтверждены сервером.'));return;}
@@ -210,16 +230,6 @@ async function submitLocal(type,data,recordId){const op={opId:nowId(),recordId:r
  await queueAdd(op);await renderQueue();message('Сохранено на телефоне. Ожидает отправки в Google Таблицу.');
  if(navigator.onLine)syncQueue();return op;
 }
-function promptBags(defaultBags){const raw=prompt('Сколько мешков фактически привезено?',String(defaultBags||1));if(raw===null)return null;return num(raw,'мешки',1,200,false);}
-function promptKilos(){const raw=prompt('Общий вес, кг (например, 24,6):','');if(raw===null)return null;return num(raw,'вес',.1,1000,true);}
-async function receiveRecord(r){try{
- const bags=promptBags(r.pickupBags);if(bags===null)return;
- const data={bags};if(r.mode==='BEFORE'){const weight=promptKilos();if(weight===null)return;data.weight=weight;}
- if(bags!==r.pickupBags&&!confirm(`У курьера было ${r.pickupBags} меш., принято ${bags}. Сохранить расхождение?`))return;
- await submitLocal('RECEIVE',data,r.id);
- }catch(e){message(errorText(e),true);}}
-async function weighRecord(r){try{const weight=promptKilos();if(weight!==null)await submitLocal('WEIGH',{weight},r.id);}catch(e){message(errorText(e),true);}}
-async function resolveRecord(r){const note=prompt('Укажите причину расхождения и решение:','');if(note===null||!note.trim())return;await submitLocal('RESOLVE',{note},r.id);}
 function renderOfficeHistory(){
   const list=(remote.records||[]).filter(r=>r.source==='DIRECT'&&['WEIGHED','ACCEPTED_ITEMS'].includes(r.status)).slice(0,7);
   const el=$('officeHistory');el.replaceChildren();
@@ -237,6 +247,7 @@ function buildForms(){
    if(!hasRole('OFFICE'))throw Error('Нет доступа к приёмке');
    const cid=$('officeClient').value,c=clientById(cid);
    if(!c)throw Error('Выберите клиента');
+   if(accountType(c)==='UNKNOWN')throw Error('У клиента не уточнён способ расчёта в B2B-справочнике');
    const data={clientId:cid,note:$('officeNote').value};
    if(accountType(c)==='PIECE'){data.items=collectItems();}
    else {data.bags=num($('officeBags').value,'мешки',1,200,false);data.weight=num($('officeWeight').value,'вес',.1,1000,true);}
@@ -246,13 +257,7 @@ function buildForms(){
    resetOfficeForm();$('officeClient').focus();
   }catch(err){message(errorText(err),true);}finally{submit.disabled=false;}
  });
- $('courierForm').addEventListener('submit',async e=>{e.preventDefault();const submit=e.target.querySelector('button[type="submit"]');if(submit.disabled)return;submit.disabled=true;
-  try{if(!hasRole('COURIER'))throw Error('Нет доступа курьера');
-   if(!clientById($('courierClient').value))throw Error('Выберите клиента');
-   const data={clientId:$('courierClient').value,bags:num($('courierBags').value,'мешки',1,200,false),note:$('courierNote').value};
-   await submitLocal('PICKUP',data);$('courierForm').reset();$('courierClient').value='';
-  }catch(err){message(errorText(err),true);}finally{submit.disabled=false;}
- });
+
 }
 
 async function init(){
@@ -262,18 +267,22 @@ async function init(){
   const old={...config};config={endpoint:$('endpoint').value.trim(),token:$('token').value.trim()};
   if(!validSetup()){config=old;message('Неверный адрес /exec или короткий токен.',true);return;}
   localStorage.setItem(STORE,JSON.stringify(config));
-  try{await refreshRemote();if(navigator.storage?.persist)await navigator.storage.persist();message('Подключено. Теперь добавьте приложение на главный экран телефона.');switchTab(hasRole('OFFICE')?'office':'courier');}
+  try{await refreshRemote();if(navigator.storage?.persist)await navigator.storage.persist();message('Подключено. Справочник загружен.');switchTab(hasRole('OFFICE')?'office':'pending');}
   catch(e){config=old;localStorage.setItem(STORE,JSON.stringify(config));message('Не удалось проверить подключение: '+errorText(e),true);}
  });
- $('syncBtn').addEventListener('click',()=>syncQueue(true));$('refreshBtn').addEventListener('click',async()=>{try{await refreshRemote();message('Список обновлён.');}catch(e){message(errorText(e),true);}});
+ $('syncBtn').addEventListener('click',()=>syncQueue(true));$('refreshBtn').addEventListener('click',async()=>{try{await refreshRemote();message('Справочник и очередь обновлены.');}catch(e){message(errorText(e),true);}});
+ $('refreshClientsBtn').addEventListener('click',async()=>{const btn=$('refreshClientsBtn');btn.disabled=true;try{await refreshRemote();message('Список клиентов обновлён: '+(remote.clients||[]).length+'.');}catch(e){message('Обновить клиентов не удалось: '+errorText(e),true);}finally{btn.disabled=false;}});
  $('recheck').addEventListener('click',async()=>{try{await refreshRemote();message('Соединение работает. Версия API: '+(remote.apiVersion??'не определена'));}catch(e){message(errorText(e),true);}});
- $('apiRetry').addEventListener('click',async()=>{const btn=$('apiRetry');btn.disabled=true;try{await refreshRemote();if(Number(remote.apiVersion||0)>=2){message('Серверная версия 1.1 подтверждена. Приёмка доступна.');}else{message('Сервер вернул устаревшую версию API: '+(remote.apiVersion??'не определена')+'. Проверьте развёртывание Apps Script.',true);}}catch(e){message('Не удалось проверить сервер: '+errorText(e),true);}finally{btn.disabled=false;}});
+ $('apiRetry').addEventListener('click',async()=>{const btn=$('apiRetry');btn.disabled=true;try{await refreshRemote();if(Number(remote.apiVersion||0)>=3){message('Серверная версия 1.2 подтверждена. Приёмка доступна.');}else{message('Сервер вернул устаревшую версию API: '+(remote.apiVersion??'не определена')+'. Проверьте развёртывание Apps Script.',true);}}catch(e){message('Не удалось проверить сервер: '+errorText(e),true);}finally{btn.disabled=false;}});
  $('showSetup').addEventListener('click',()=>{$('setup').hidden=false;message('Перед заменой токена дождитесь нулевой очереди.',true);});
  document.querySelectorAll('.tabs button').forEach(b=>b.addEventListener('click',()=>switchTab(b.dataset.tab)));
  $('officeClient').addEventListener('change',renderOfficeFields);
- window.addEventListener('online',()=>{renderNetwork();syncQueue();});window.addEventListener('offline',renderNetwork);
- document.addEventListener('visibilitychange',()=>{if(!document.hidden&&navigator.onLine)syncQueue();});
- renderNetwork();renderIdentity();renderClientOptions();buildForms();setAvailability();await renderQueue();await renderRecords();
+ window.addEventListener('online',()=>{renderNetwork();refreshOnReturn().finally(()=>syncQueue());});
+ window.addEventListener('offline',()=>{renderNetwork();renderDirectoryStatus();});
+ document.addEventListener('visibilitychange',()=>{if(!document.hidden){refreshOnReturn();if(navigator.onLine)syncQueue();}});
+ window.addEventListener('pageshow',()=>{refreshOnReturn();});
+ window.addEventListener('focus',()=>{refreshOnReturn();});
+ renderNetwork();renderIdentity();renderClientOptions();buildForms();setAvailability();await renderQueue();
  if(validSetup()){
   try{await refreshRemote();if(navigator.onLine)syncQueue();}
   catch(e){message('Работаем с сохранённым справочником. Проверка связи: '+errorText(e),true);}
