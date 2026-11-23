@@ -8,11 +8,11 @@
   <meta name="description" content="Учёт B2B-поступлений белья на Лукачёва с офлайн-очередью">
   <link rel="icon" href="icon.svg" type="image/svg+xml">
   <link rel="manifest" href="manifest.webmanifest">
-  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="styles.css?v=1.3">
   <title>B2B · Лукачёва</title>
 </head>
 <body>
-  <header class="top"><div class="brand"><strong>B2B · Лукачёва</strong><small>Приёмка B2B · Лукачёва, 6</small></div><div class="connect"><span id="network">Проверка…</span><small id="identity">Не настроено</small></div></header>
+  <header class="top"><div class="brand"><strong>B2B · Лукачёва</strong><small>Приёмка B2B · Лукачёва, 6 · v1.3</small></div><div class="connect"><span id="network">Проверка…</span><small id="identity">Не настроено</small></div></header>
   <div class="syncbar"><span id="queueCount">Очередь: 0</span><button type="button" id="syncBtn" class="outline">Отправить</button></div>
   <main>
     <div id="message" class="notice" role="status" aria-live="polite" aria-atomic="true" hidden></div>
@@ -34,9 +34,16 @@
     <section id="office" class="panel view" hidden>
       <div class="headrow"><h1>Приёмка в офисе</h1><button type="button" class="outline small" id="refreshClientsBtn">Обновить список</button></div>
       <p id="clientDirectoryStatus" class="muted" role="status" aria-live="polite">Справочник: загрузка...</p>
-      <div id="apiCompatibility" class="notice warn" hidden><span id="apiCompatibilityText">Сервер не подтвердил совместимость с приложением 1.2.</span><button id="apiRetry" class="outline small" type="button" style="display:block;margin-top:10px">Проверить сервер</button></div>
+      <div id="apiCompatibility" class="notice warn" hidden><span id="apiCompatibilityText">Сервер не подтвердил совместимость с приложением 1.3.</span><button id="apiRetry" class="outline small" type="button" style="display:block;margin-top:10px">Проверить сервер</button></div>
       <form id="officeForm">
-        <label for="officeClient">Клиент</label><select id="officeClient" required><option value="">Выберите клиента</option></select>
+        <label for="officeClient">Клиент или объект</label>
+        <div id="officePicker" class="client-picker">
+          <input id="officeClient" type="search" placeholder="Название или адрес" autocomplete="off"
+            autocapitalize="off" spellcheck="false" role="combobox" aria-autocomplete="list"
+            aria-expanded="false" aria-controls="officeClientOptions">
+          <div id="officeClientOptions" class="client-options" role="listbox" aria-label="Клиенты и объекты" hidden></div>
+          <p id="officeClientEmpty" class="client-empty" role="status" hidden>Совпадений нет</p>
+        </div>
         <div id="officeWeightFields">
           <label for="officeBags">Количество мешков</label><input id="officeBags" type="number" min="1" max="200" step="1" value="1" required>
           <label for="officeWeight">Общий вес, кг</label><input id="officeWeight" type="text" inputmode="decimal" placeholder="Например, 18,6" required>
@@ -52,6 +59,18 @@
       </form>
       <div id="lastOfficeStatus" class="last-status" role="status" aria-live="polite" hidden></div>
       <h2>Последние поступления</h2><div id="officeHistory" class="records"></div>
+      <details id="officeReport" class="office-report">
+        <summary>Сводка по клиентам и объектам</summary>
+        <form id="reportForm">
+          <div class="report-dates">
+            <label>С <input id="reportFrom" type="date" required></label>
+            <label>По <input id="reportTo" type="date" required></label>
+          </div>
+          <button class="outline" type="submit">Показать сводку</button>
+        </form>
+        <div id="reportStatus" role="status"></div>
+        <div id="reportResults" class="records"></div>
+      </details>
     </section>
     <section id="pending" class="panel view" hidden>
       <div class="headrow"><h1>Очередь телефона</h1><button class="outline small" id="refreshBtn" type="button">Обновить</button></div>
@@ -67,6 +86,6 @@
     </section>
   </main>
   <footer id="footer">Первый запуск требует интернета. Затем приёмку можно выполнять офлайн.</footer>
-  <script src="app.js" defer></script>
+  <script src="app.js?v=1.3" defer></script>
 </body>
 </html>
